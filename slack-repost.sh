@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# no warranty
+# no warranty, thread is not supported
 
 TOKEN=""
 
@@ -15,7 +15,6 @@ set -u
 
 FULL0="$( readlink -f "${BASH_SOURCE:-$0}" )"
 DIR=$( dirname "${FULL0}" )
-NAME=$( basename "${FULL0}" .sh )
 
 DIR_WORK="${DIR}/.tmp"
 [ -d "${DIR_WORK}" ] || mkdir "${DIR_WORK}"
@@ -43,12 +42,15 @@ fi
 
 while read -r jsonline; do
 
-    sleep 10
+    sleep 15
 
     old_ts="$( jq -r .ts < <( echo "${jsonline}" ) )"
 
     [ "$( echo "${old_ts}" | awk -F. '{print $1}' )" -lt "${THRESHOLD}" ] \
     || continue
+
+    filestat="${DIR_WORK}/${old_ts}.filestat"
+    echo -n "ok" > "${filestat}"
 
     text="$( jq -r .text < <( echo "${jsonline}" ) )"
     files="$( jq .files < <( echo "${jsonline}" ) )"
@@ -58,20 +60,22 @@ while read -r jsonline; do
         fileurls="$(
           while read -r url_private_download; do
 
-              sleep 1
+              sleep 2
               filename=$( echo "${url_private_download}" | awk -F/ '{print $NF}' )
 
               if ! curl --compressed -sS --retry 1 --retry-delay 15 -m 7 \
                 --get \
                 -H "Authorization: Bearer ${TOKEN:?}" \
                 -H 'Content-Type:application/x-www-form-urlencoded' \
-                "${url_private_download}" -o "${DIR_WORK}/${filename}" ; then
+                "${url_private_download}" \
+                -o "${DIR_WORK}/${filename}" ; then
                   echo >&2 "[error] file:download ${url_private_download} => ${DIR_WORK}/${filename} (skip_the_rest:${old_ts}@${target_ch})"
                   jq . < <( echo "${jsonline}" ) >&2
-                  continue 2
+                  echo -n "NG" > "${filestat}"
+                  exit 2
               fi
 
-              sleep 1
+              sleep 2
 
               # https://api.slack.com/methods/files.upload
               curl --compressed -sS --retry 1 --retry-delay 15 -m 7 \
@@ -85,7 +89,8 @@ while read -r jsonline; do
                   echo >&2 "[error] files.upload[reupload] ${DIR_WORK}/${filename} (skip_the_rest:${old_ts}@${target_ch})"
                   jq . < <( echo "${jsonline}" ) >&2
                   jq . "${DIR_WORK}/${old_ts}.upload" >&2
-                  continue 2
+                  echo -n "NG" > "${filestat}"
+                  exit 2
               fi
 
               rm "${DIR_WORK}/${filename}"
@@ -98,7 +103,10 @@ while read -r jsonline; do
         )"
     fi
 
-    sleep 1
+    [ "$( cat "${filestat}" )" = ok ] \
+    || continue
+
+    sleep 2
 
     # https://api.slack.com/methods/chat.postMessage
     curl --compressed -sS --retry 1 --retry-delay 15 -m 7 \
@@ -121,7 +129,7 @@ while read -r jsonline; do
 
     new_ts=$( jq -r .ts "${DIR_WORK}/${old_ts}.repost" )
 
-    sleep 1
+    sleep 2
 
     # https://api.slack.com/methods/chat.delete
     curl --compressed -sS --retry 1 --retry-delay 15 -m 7 \
@@ -141,7 +149,7 @@ while read -r jsonline; do
     fi
 
     if [ "$( jq '.is_starred' < <( echo "${jsonline}" ) )" = true ]; then
-        sleep 1
+        sleep 2
 
         # https://api.slack.com/methods/stars.add
         curl --compressed -sS --retry 1 --retry-delay 15 -m 7 \
@@ -161,7 +169,7 @@ while read -r jsonline; do
         fi
     fi
     if [ "$( jq '.pinned_to' < <( echo "${jsonline}" ) )" != null ]; then
-        sleep 1
+        sleep 2
 
         # https://api.slack.com/methods/pins.add
         curl --compressed -sS --retry 1 --retry-delay 15 -m 7 \
