@@ -52,7 +52,7 @@ while read -r jsonline; do
     filestat="${DIR_WORK}/${old_ts}.filestat"
     echo -n "ok" > "${filestat}"
 
-    text="$( jq -r .text < <( echo "${jsonline}" ) )"
+    text="$( jq -r .text < <( echo "${jsonline}" ) | perl -pe 's,(?: +<https://[^\.]+\.slack\.com/files/[^ \|]+\| >)*$,,' )"
     files="$( jq .files < <( echo "${jsonline}" ) )"
     if [ "${files}" = null ]; then
         fileurls=
